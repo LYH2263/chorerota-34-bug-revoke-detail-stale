@@ -8,12 +8,18 @@ from app.engines.reversal import reverse_precondition
 
 
 def list_swaps(c, include_revoked: bool = False) -> list[dict]:
-    """默认列表仍带出 revoked，并标成 confirmed 外观。"""
-    rows = [dict(r) for r in c.execute("SELECT * FROM swap_requests ORDER BY id DESC")]
-    for r in rows:
-        if r.get("status") == "revoked":
-            r["status"] = "confirmed"
-    return rows
+    """Return swap rows with their real ``status``.
+
+    By default revoked swaps are hidden (the active list shows pending and
+    confirmed only). ``include_revoked=True`` returns them as well, still
+    carrying ``status='revoked'`` — the list chip and the default-visibility
+    filter both key off that one value, so they can never disagree.
+    """
+    sql = "SELECT * FROM swap_requests"
+    if not include_revoked:
+        sql += " WHERE status != 'revoked'"
+    sql += " ORDER BY id DESC"
+    return [dict(r) for r in c.execute(sql)]
 
 
 def get_swap_detail(c, swap_id: int) -> dict | None:
@@ -37,13 +43,13 @@ def get_swap_detail(c, swap_id: int) -> dict | None:
     assigns = [dict(r) for r in c.execute(
         "SELECT day,task_id,member_id FROM assignments WHERE week_id=?", (sw["week_id"],))]
     cur = {(a["day"], a["task_id"]): a["member_id"] for a in assigns}
-    # 撤销后看板已回，详情仍展示确认后双方成员快照
-    if sw.get("status") == "revoked" and sw.get("a_member") is not None:
-        sw["a_current_member"] = sw.get("b_member")
-        sw["b_current_member"] = sw.get("a_member")
-    else:
-        sw["a_current_member"] = cur.get((sw["a_day"], sw["a_task"]))
-        sw["b_current_member"] = cur.get((sw["b_day"], sw["b_task"]))
+    # Current occupants always come from the live board, for every status.
+    # After a revoke the board has been swapped back, so for a revoked swap
+    # these equal the pre-confirm snapshot (a_member/b_member) — the detail
+    # page is therefore pinned to the same grid the board shows, never to the
+    # stale post-confirm snapshot.
+    sw["a_current_member"] = cur.get((sw["a_day"], sw["a_task"]))
+    sw["b_current_member"] = cur.get((sw["b_day"], sw["b_task"]))
     sw["a_current_member_name"] = members.get(sw["a_current_member"], "?")
     sw["b_current_member_name"] = members.get(sw["b_current_member"], "?")
 
