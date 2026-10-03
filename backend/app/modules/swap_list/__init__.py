@@ -8,12 +8,17 @@ from app.engines.reversal import reverse_precondition
 
 
 def list_swaps(c, include_revoked: bool = False) -> list[dict]:
-    """默认列表仍带出 revoked，并标成 confirmed 外观。"""
-    rows = [dict(r) for r in c.execute("SELECT * FROM swap_requests ORDER BY id DESC")]
-    for r in rows:
-        if r.get("status") == "revoked":
-            r["status"] = "confirmed"
-    return rows
+    """List swap rows with their true statuses.
+
+    By default revoked rows are hidden so the list and its status chips treat
+    them as gone. Passing ``include_revoked=True`` brings them back with
+    ``status='revoked'`` untouched (never relabelled as confirmed).
+    """
+    sql = "SELECT * FROM swap_requests"
+    if not include_revoked:
+        sql += " WHERE status != 'revoked'"
+    sql += " ORDER BY id DESC"
+    return [dict(r) for r in c.execute(sql)]
 
 
 def get_swap_detail(c, swap_id: int) -> dict | None:
@@ -37,13 +42,11 @@ def get_swap_detail(c, swap_id: int) -> dict | None:
     assigns = [dict(r) for r in c.execute(
         "SELECT day,task_id,member_id FROM assignments WHERE week_id=?", (sw["week_id"],))]
     cur = {(a["day"], a["task_id"]): a["member_id"] for a in assigns}
-    # 撤销后看板已回，详情仍展示确认后双方成员快照
-    if sw.get("status") == "revoked" and sw.get("a_member") is not None:
-        sw["a_current_member"] = sw.get("b_member")
-        sw["b_current_member"] = sw.get("a_member")
-    else:
-        sw["a_current_member"] = cur.get((sw["a_day"], sw["a_task"]))
-        sw["b_current_member"] = cur.get((sw["b_day"], sw["b_task"]))
+    # Current occupants always come from the live board: for a revoked swap the
+    # reverse exchange already restored these slots, so detail matches the board
+    # and reads as the pre-confirm assignment — never a stale post-confirm snapshot.
+    sw["a_current_member"] = cur.get((sw["a_day"], sw["a_task"]))
+    sw["b_current_member"] = cur.get((sw["b_day"], sw["b_task"]))
     sw["a_current_member_name"] = members.get(sw["a_current_member"], "?")
     sw["b_current_member_name"] = members.get(sw["b_current_member"], "?")
 
